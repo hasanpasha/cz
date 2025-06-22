@@ -86,7 +86,7 @@ pub fn gen(self: *AssemblyGenerator, program: ProgramAST) !AssemblyProgram {
 
 pub fn accept_function(self: *AssemblyGenerator, fun: FunctionAST) !FunctionDefinition {
     return .{
-        .name = fun.name.lexeme,
+        .name = fun.name.value.identifier,
         .instructions = try fun.body.accept(self, Instructions),
     };
 }
@@ -100,7 +100,7 @@ pub fn accept_return(self: *AssemblyGenerator, stmt: ReturnAST) !Instructions {
 
 pub fn accept_constant(self: *AssemblyGenerator, constant: ConstantAST) !Operand {
     _ = self;
-    return .{ .immediate = .{ .value = constant.tok.lexeme } };
+    return .{ .immediate = .{ .value = constant.tok.value.constant } };
 }
 
 pub const PrettyPrinter = struct {

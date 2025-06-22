@@ -38,15 +38,38 @@ pub const TokenKind = enum {
     eoi,
 };
 
+pub const TokenValue = union(TokenKind) {
+    identifier: []const u8,
+    constant: []const u8,
+    int,
+    void,
+    @"return",
+    left_paren,
+    right_paren,
+    left_brace,
+    right_brace,
+    semicolon,
+    eoi,
+
+    pub fn format(self: TokenValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        switch (self) {
+            .identifier => |lexeme| try writer.print("{s}(\"{s}\")", .{ @tagName(self), lexeme }),
+            .constant => |lexeme| try writer.print("{s}({s})", .{ @tagName(self), lexeme }),
+            else => try writer.print("{s}", .{@tagName(self)}),
+        }
+    }
+};
+
 pub const Token = struct {
-    kind: TokenKind,
-    lexeme: []const u8,
+    value: TokenValue,
     location: Location,
 
     pub fn format(self: Token, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
-        try writer.print("{}: {s} \"{s}\"", .{ self.location, @tagName(self.kind), self.lexeme });
+        try writer.print("{}: {}", .{ self.location, self.value });
     }
 };
 
@@ -83,7 +106,7 @@ pub fn lex(alloc: std.mem.Allocator, source: [:0]const u8, filename: []const u8)
     while (true) {
         const tok = try lexer.next_token();
         try tokens.append(tok);
-        if (tok.kind == .eoi) break;
+        if (tok.value == .eoi) break;
     }
 
     return tokens;
@@ -190,10 +213,15 @@ fn current_lexeme_location(self: *Lexer) Location {
     return this_loc;
 }
 
-fn token(self: *Lexer, kind: TokenKind) Token {
+fn token(self: *Lexer, comptime kind: TokenKind) Token {
+    const value: TokenValue = switch (kind) {
+        .identifier => .{ .identifier = self.current_lexeme() },
+        .constant => .{ .constant = self.current_lexeme() },
+        inline else => @unionInit(TokenValue, @tagName(kind), {}),
+    };
+
     return Token{
-        .kind = kind,
-        .lexeme = self.current_lexeme(),
+        .value = value,
         .location = self.current_lexeme_location(),
     };
 }

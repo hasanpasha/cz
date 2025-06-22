@@ -53,7 +53,7 @@ pub const PrettyPrinter = struct {
     }
 
     pub fn accept_function(self: PrettyPrinter, fun: Function) !void {
-        try self.writer.print("Function(name=\"{s}\", body=", .{fun.name.lexeme});
+        try self.writer.print("Function(name=\"{s}\", body=", .{fun.name.value.identifier});
         try fun.body.accept(self, void);
         try self.writer.print(")", .{});
     }
@@ -65,7 +65,7 @@ pub const PrettyPrinter = struct {
     }
 
     pub fn accept_constant(self: PrettyPrinter, constant: Constant) !void {
-        try self.writer.print("Constant({s})", .{constant.tok.lexeme});
+        try self.writer.print("Constant({s})", .{constant.tok.value.constant});
     }
 };
 
@@ -133,7 +133,7 @@ fn consume(self: *Parser, kind: TokenKind, msg: []const u8) !Token {
     try self.assert_has_more_tokens();
 
     const cur = self.peek();
-    if (cur.kind != kind) {
+    if (cur.value != kind) {
         try stderr.print("is {}, {s}\n", .{ cur, msg });
         return error.unexpected_token;
     }
