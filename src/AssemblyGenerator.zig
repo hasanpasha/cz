@@ -4,13 +4,7 @@ const Lexer = cz.Lexer;
 const Parser = cz.Parser;
 const meta = @import("meta.zig");
 const AcceptParentFn = meta.AcceptParentFn;
-
-const ProgramAST = Parser.Program;
-const StatementAST = Parser.Statement;
-const ExpressionAST = Parser.Expression;
-const FunctionAST = Parser.Function;
-const ReturnAST = Parser.Return;
-const ConstantAST = Parser.Constant;
+const AST = cz.AST;
 
 pub const AssemblyProgram = struct {
     function_definition: FunctionDefinition,
@@ -71,7 +65,7 @@ pub fn deinit(self: *AssemblyGenerator) void {
     self.allocator.destroy(self);
 }
 
-pub fn gen(self: *AssemblyGenerator, program: ProgramAST) !AssemblyProgram {
+pub fn gen(self: *AssemblyGenerator, program: AST.Program) !AssemblyProgram {
     var gen_asm: AssemblyProgram = undefined;
     gen_asm.arena = .init(self.allocator);
 
@@ -84,21 +78,29 @@ pub fn gen(self: *AssemblyGenerator, program: ProgramAST) !AssemblyProgram {
     return gen_asm;
 }
 
-pub fn accept_function(self: *AssemblyGenerator, fun: FunctionAST) !FunctionDefinition {
+pub fn accept_function(self: *AssemblyGenerator, fun: AST.Function) !FunctionDefinition {
     return .{
         .name = fun.name.value.identifier,
         .instructions = try fun.body.accept(self, Instructions),
     };
 }
 
-pub fn accept_return(self: *AssemblyGenerator, stmt: ReturnAST) !Instructions {
+pub fn accept_return(self: *AssemblyGenerator, stmt: AST.Return) !Instructions {
     var array = Instructions.init(self.allocator);
     try array.append(.{ .mov = .{ .src = try stmt.expr.accept(self, Operand), .dst = .{ .register = .{} } } });
     try array.append(.ret);
     return array;
 }
 
-pub fn accept_constant(self: *AssemblyGenerator, constant: ConstantAST) !Operand {
+pub fn accept_unary(self: *AssemblyGenerator, unary: AST.Unary) !Operand {
+    // try self.writer.print("Unary({}, ", .{unary.operator.value});
+    // try unary.expr.accept(self, void);
+    _ = self;
+    _ = unary;
+    return .{ .immediate = .{ .value = "NotImplemented" } };
+}
+
+pub fn accept_constant(self: *AssemblyGenerator, constant: AST.Constant) !Operand {
     _ = self;
     return .{ .immediate = .{ .value = constant.tok.value.constant } };
 }

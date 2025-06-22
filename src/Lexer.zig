@@ -35,6 +35,9 @@ pub const TokenKind = enum {
     left_brace,
     right_brace,
     semicolon,
+    tilde,
+    hyphen,
+    hyphen_hyphen,
     eoi,
 };
 
@@ -49,6 +52,9 @@ pub const TokenValue = union(TokenKind) {
     left_brace,
     right_brace,
     semicolon,
+    tilde,
+    hyphen,
+    hyphen_hyphen,
     eoi,
 
     pub fn format(self: TokenValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -247,6 +253,8 @@ pub fn next_token(self: *Lexer) !Token {
         '{' => self.token(.left_brace),
         '}' => self.token(.right_brace),
         ';' => self.token(.semicolon),
+        '~' => self.token(.tilde),
+        '-' => if (self.peek() == '-') self.token(.hyphen_hyphen) else self.token(.hyphen),
         'a'...'z', 'A'...'Z', '_' => word: {
             while ((!self.is_at_end() and std.ascii.isAlphanumeric(self.peek()) or self.peek() == '_')) _ = self.advance();
 
