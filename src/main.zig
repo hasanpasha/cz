@@ -6,8 +6,7 @@ const Parser = cz.Parser;
 const PrettyPrinter = Parser.PrettyPrinter;
 const AssemblyGenerator = cz.AssemblyGenerator;
 const GeneratedProgram = AssemblyGenerator.AssemblyProgram;
-const AssemblyEmitter = cz.AssemblyEmitter;
-const X86_64Emitter = cz.emitters.X86_64Emitter;
+const TackyIRGenerator = cz.TackyIRGenerator;
 
 const clap = @import("clap");
 
@@ -18,11 +17,13 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer if (gpa.deinit() == .leak) @panic("memory leak");
     const allocator = gpa.allocator();
+    // const allocator = std.heap.page_allocator;
 
     const params = comptime clap.parseParamsComptime(
         \\-h, --help            Display this help and exit.
         \\-l, --lex             Run the lexer only.
         \\-p, --parse           Run the parser only.
+        \\-t, --tacky           Run the TackyIR generator only.
         \\-c, --codegen         Run the assembly generator without emitting code.
         \\<FILE>
     );
@@ -77,7 +78,7 @@ pub fn main() !void {
     };
     defer file.close();
 
-    const code = file.readToEndAllocOptions(allocator, 64_000, null, .of(u8), 0) catch std.process.exit(1);
+    const code = file.readToEndAllocOptions(allocator, 64_000, null, @alignOf(u8), 0) catch std.process.exit(1);
     defer allocator.free(code);
 
     const tokens = Lexer.lex(allocator, code, processed_path) catch |err| {
@@ -111,16 +112,25 @@ pub fn main() !void {
         exit(0);
     }
 
-    const asm_gen = AssemblyGenerator.init(allocator) catch |err| {
-        stderr.print("memory error while creating `AssemblyGenerator` instance: {}", .{err}) catch {};
+    const tackyIR_gen = TackyIRGenerator.init(allocator) catch |err| {
+        stderr.print("memory error while creating `TackyIRGenerator` instance: {}", .{err}) catch {};
         exit(4);
     };
-    defer asm_gen.deinit();
+    defer tackyIR_gen.deinit();
 
-    const program_asm = asm_gen.gen(program_ast) catch |err| {
-        stderr.print("error on asm gen: {}", .{err}) catch {};
+    const program_tackyIR = tackyIR_gen.gen(program_ast) catch |err| {
+        stderr.print("error on TackyIR gen: {}\n", .{err}) catch {};
         exit(4);
     };
+    defer program_tackyIR.deinit();
+
+    if (res.args.tacky != 0) {
+        var tackyIR_printer = TackyIRGenerator.PrettyPrinter{ .writer = stdout.any() };
+        tackyIR_printer.print(program_tackyIR) catch {};
+        exit(0);
+    }
+
+    const program_asm = try AssemblyGenerator.generate(program_tackyIR, allocator);
     defer program_asm.deinit();
 
     if (res.args.codegen != 0) {
@@ -140,9 +150,7 @@ pub fn main() !void {
         std.fs.deleteFileAbsolute(asm_output_path) catch {};
     }
 
-    var x86_64 = X86_64Emitter{ .writer = asm_file.writer().any() };
-    const emitter = x86_64.emitter();
-    emitter.emit(program_asm) catch |err| {
+    program_asm.emit(asm_file.writer().any()) catch |err| {
         stderr.print("failed emitting assembly: {}\n", .{err}) catch {};
         exit(5);
     };
