@@ -9,37 +9,6 @@ const AST = cz.AST;
 
 const stderr = std.io.getStdErr().writer();
 
-pub const PrettyPrinter = struct {
-    writer: std.io.AnyWriter,
-
-    pub fn print(self: PrettyPrinter, program: AST.Program) !void {
-        try self.writer.print("Program(", .{});
-        try self.accept_function(program.function);
-        try self.writer.print(")\n", .{});
-    }
-
-    pub fn accept_function(self: PrettyPrinter, fun: AST.Function) !void {
-        try self.writer.print("Function(name=\"{s}\", body=", .{fun.name.value.identifier});
-        try fun.body.accept(self, void);
-        try self.writer.print(")", .{});
-    }
-
-    pub fn accept_return(self: PrettyPrinter, stmt: AST.Return) !void {
-        try self.writer.print("Return(", .{});
-        try stmt.expr.accept(self, void);
-        try self.writer.print(")", .{});
-    }
-
-    pub fn accept_unary(self: PrettyPrinter, unary: AST.Unary) !void {
-        try self.writer.print("Unary({}, ", .{unary.operator.value});
-        try unary.expr.accept(self, void);
-    }
-
-    pub fn accept_constant(self: PrettyPrinter, constant: AST.Constant) !void {
-        try self.writer.print("Constant({s})", .{constant.tok.value.constant});
-    }
-};
-
 pub const Error = error{
     unexpected_token,
     no_more_tokens,

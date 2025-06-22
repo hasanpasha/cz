@@ -3,10 +3,8 @@ const exit = std.process.exit;
 const cz = @import("cz");
 const Lexer = cz.Lexer;
 const Parser = cz.Parser;
-const PrettyPrinter = Parser.PrettyPrinter;
-const AssemblyGenerator = cz.AssemblyGenerator;
-const GeneratedProgram = AssemblyGenerator.AssemblyProgram;
 const TackyIRGenerator = cz.TackyIRGenerator;
+const asm_generators = cz.asm_generators;
 
 const clap = @import("clap");
 
@@ -25,6 +23,7 @@ pub fn main() !void {
         \\-p, --parse           Run the parser only.
         \\-t, --tacky           Run the TackyIR generator only.
         \\-c, --codegen         Run the assembly generator without emitting code.
+        \\-v, --verbose         print generated stuff.
         \\<FILE>
     );
 
@@ -87,6 +86,12 @@ pub fn main() !void {
     };
     defer tokens.deinit();
 
+    if (res.args.verbose != 0 and res.args.lex == 0) {
+        for (tokens.items) |tok| {
+            stdout.print("{}\n", .{tok}) catch break;
+        }
+    }
+
     if (res.args.lex != 0) {
         for (tokens.items) |tok| {
             stdout.print("{}\n", .{tok}) catch exit(2);
@@ -106,9 +111,12 @@ pub fn main() !void {
     };
     defer program_ast.deinit();
 
+    if (res.args.verbose != 0 and res.args.parse == 0) {
+        stdout.print("{p}\n", .{program_ast}) catch {};
+    }
+
     if (res.args.parse != 0) {
-        const printer = PrettyPrinter{ .writer = stdout.any() };
-        printer.print(program_ast) catch {};
+        stdout.print("{p}\n", .{program_ast}) catch {};
         exit(0);
     }
 
@@ -124,25 +132,33 @@ pub fn main() !void {
     };
     defer program_tackyIR.deinit();
 
+    if (res.args.verbose != 0 and res.args.tacky == 0) {
+        stdout.print("{p}\n", .{program_tackyIR}) catch {};
+    }
+
     if (res.args.tacky != 0) {
-        var tackyIR_printer = TackyIRGenerator.PrettyPrinter{ .writer = stdout.any() };
-        tackyIR_printer.print(program_tackyIR) catch {};
+        stdout.print("{p}\n", .{program_tackyIR}) catch {};
         exit(0);
     }
 
-    const program_asm = try AssemblyGenerator.generate(program_tackyIR, allocator);
-    defer program_asm.deinit();
+    const x86_64_generator = try asm_generators.X86_64ASMGenerator.init(allocator);
+    defer x86_64_generator.deinit();
+
+    const generator = x86_64_generator.generator();
+    const asm_program = try generator.generate(program_tackyIR);
+    defer asm_program.destroy();
+
+    if (res.args.verbose != 0 and res.args.codegen == 0) {
+        stdout.print("{}\n", .{asm_program}) catch {};
+    }
 
     if (res.args.codegen != 0) {
-        const asm_printer = AssemblyGenerator.PrettyPrinter{ .writer = stdout.any() };
-        asm_printer.print(program_asm) catch {};
+        stdout.print("{}\n", .{asm_program}) catch {};
         exit(0);
     }
 
     const asm_output_path = try replace_extension(allocator, input_path, ".c", ".s");
     defer allocator.free(asm_output_path);
-
-    std.log.info("out asm to: {s}", .{asm_output_path});
 
     const asm_file = try std.fs.createFileAbsolute(asm_output_path, .{});
     defer {
@@ -150,7 +166,7 @@ pub fn main() !void {
         std.fs.deleteFileAbsolute(asm_output_path) catch {};
     }
 
-    program_asm.emit(asm_file.writer().any()) catch |err| {
+    asm_program.emit(asm_file.writer().any()) catch |err| {
         stderr.print("failed emitting assembly: {}\n", .{err}) catch {};
         exit(5);
     };

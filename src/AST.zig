@@ -11,6 +11,17 @@ pub const Program = struct {
     pub fn deinit(self: Program) void {
         self.arena.deinit();
     }
+
+    pub fn format(self: Program, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = options;
+
+        if (fmt[0] == 'p') {
+            const printer = PrettyPrinter{ .writer = writer };
+            try printer.print(self);
+        } else {
+            try writer.print("ProgramAST{ .function = {} }", .{self.function});
+        }
+    }
 };
 
 pub const Function = struct {
@@ -49,4 +60,35 @@ pub const Expression = union(enum) {
 pub const Return = struct {
     keyword: Token,
     expr: Expression,
+};
+
+pub const PrettyPrinter = struct {
+    writer: std.io.AnyWriter,
+
+    pub fn print(self: PrettyPrinter, program: Program) !void {
+        try self.writer.print("ProgramAST(", .{});
+        try self.accept_function(program.function);
+        try self.writer.print(")", .{});
+    }
+
+    pub fn accept_function(self: PrettyPrinter, fun: Function) !void {
+        try self.writer.print("Function(name=\"{s}\", body=", .{fun.name.value.identifier});
+        try fun.body.accept(self, void);
+        try self.writer.print(")", .{});
+    }
+
+    pub fn accept_return(self: PrettyPrinter, stmt: Return) !void {
+        try self.writer.print("Return(", .{});
+        try stmt.expr.accept(self, void);
+        try self.writer.print(")", .{});
+    }
+
+    pub fn accept_unary(self: PrettyPrinter, unary: Unary) !void {
+        try self.writer.print("Unary({}, ", .{unary.operator.value});
+        try unary.expr.accept(self, void);
+    }
+
+    pub fn accept_constant(self: PrettyPrinter, constant: Constant) !void {
+        try self.writer.print("Constant({s})", .{constant.tok.value.constant});
+    }
 };

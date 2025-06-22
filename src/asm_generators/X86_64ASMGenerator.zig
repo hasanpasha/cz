@@ -1,42 +1,18 @@
 const std = @import("std");
-const cz = @import("root.zig");
+const cz = @import("../root.zig");
 const Lexer = cz.Lexer;
 const Parser = cz.Parser;
-const AcceptParentFn = @import("meta.zig").AcceptParentFn;
+const AcceptParentFn = @import("../meta.zig").AcceptParentFn;
 const IR = cz.TackyIR;
 
-pub fn generate(program: IR.Program, allocator: std.mem.Allocator) anyerror!AssemblyProgram {
-    const generator = try AssemblyGenerator.init(allocator);
-    defer generator.deinit();
-
-    const asm_program_pass1 = try generator.gen(program);
-    defer asm_program_pass1.deinit();
-
-    const pseudo_eliminator = try PseudoRegistersEliminator.init(allocator);
-    defer pseudo_eliminator.deinit();
-
-    const asm_program_pass2 = try pseudo_eliminator.transform(asm_program_pass1);
-    defer asm_program_pass2.deinit();
-
-    const fixer = try FixUpInstructionsPass.init(allocator);
-    defer fixer.deinit();
-
-    const asm_program_pass3 = try fixer.transform(asm_program_pass2);
-
-    return asm_program_pass3;
-}
-
-pub const AssemblyProgram = struct {
+pub const ProgramASM = struct {
     function_definition: Function,
     arena: std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
 
-    pub fn deinit(self: AssemblyProgram) void {
+    pub fn deinit(self: *ProgramASM) void {
         self.arena.deinit();
-    }
-
-    pub fn emit(self: AssemblyProgram, writer: std.io.AnyWriter) !void {
-        const emitter = Emitter{ .writer = writer };
-        try emitter.emit(self);
+        self.allocator.destroy(self);
     }
 };
 
@@ -115,24 +91,64 @@ pub const Register = union(enum) {
 
 pub const Error = anyerror;
 
-pub const AssemblyGenerator = @This();
+pub const X86_64ASMGenerator = @This();
 
 allocator: std.mem.Allocator,
 instructions: ?*InstructionsArray = null,
 
-pub fn init(allocator: std.mem.Allocator) !*AssemblyGenerator {
-    const this = try allocator.create(AssemblyGenerator);
+pub fn init(allocator: std.mem.Allocator) !*X86_64ASMGenerator {
+    const this = try allocator.create(X86_64ASMGenerator);
     this.* = .{ .allocator = allocator };
     return this;
 }
 
-pub fn deinit(self: *AssemblyGenerator) void {
+pub fn deinit(self: *X86_64ASMGenerator) void {
     self.allocator.destroy(self);
 }
 
-pub fn gen(self: *AssemblyGenerator, program: IR.Program) Error!AssemblyProgram {
-    var gen_asm: AssemblyProgram = undefined;
+pub fn generator(self: *X86_64ASMGenerator) cz.ASMGenerator {
+    return .{
+        .ctx = self,
+        .generate_fn = generate_fn,
+    };
+}
+
+pub fn generate_fn(self: ?*anyopaque, program: IR.Program) anyerror!cz.ASMGenerator.ASMProgram {
+    const this_generator: *X86_64ASMGenerator = @ptrCast(@alignCast(self));
+
+    const asm_program_pass1 = try this_generator.gen(program);
+    const asm_program_pass2 = try PseudoRegistersEliminator.transform(asm_program_pass1);
+    const asm_program_pass3 = try FixUpInstructionsPass.transform(asm_program_pass2);
+
+    return cz.ASMGenerator.ASMProgram{
+        .ctx = asm_program_pass3,
+        .emit_fn = emit_fn,
+        .pretty_print_fn = pretty_print_fn,
+        .destroy_fn = destroy_fn,
+    };
+}
+
+pub fn emit_fn(ctx: ?*anyopaque, writer: std.io.AnyWriter) cz.ASMGenerator.ASMProgramError!void {
+    const self: *ProgramASM = @ptrCast(@alignCast(ctx));
+    const emitter = Emitter{ .writer = writer };
+    try emitter.emit(self.*);
+}
+
+pub fn pretty_print_fn(ctx: ?*anyopaque, writer: std.io.AnyWriter) cz.ASMGenerator.ASMProgramError!void {
+    const self: *ProgramASM = @ptrCast(@alignCast(ctx));
+    const printer = PrettyPrinter{ .writer = writer };
+    try printer.print(self.*);
+}
+
+pub fn destroy_fn(ctx: ?*anyopaque) void {
+    const self: *ProgramASM = @ptrCast(@alignCast(ctx));
+    self.deinit();
+}
+
+pub fn gen(self: *X86_64ASMGenerator, program: IR.Program) Error!*ProgramASM {
+    var gen_asm: *ProgramASM = try self.allocator.create(ProgramASM);
     gen_asm.arena = .init(self.allocator);
+    gen_asm.allocator = self.allocator;
 
     const prev_allocator = self.allocator;
     self.allocator = gen_asm.arena.allocator();
@@ -143,14 +159,14 @@ pub fn gen(self: *AssemblyGenerator, program: IR.Program) Error!AssemblyProgram 
     return gen_asm;
 }
 
-pub fn accept_function(self: *AssemblyGenerator, fun: IR.Function) Error!Function {
+pub fn accept_function(self: *X86_64ASMGenerator, fun: IR.Function) Error!Function {
     return .{
         .name = fun.identifier.value.identifier,
         .instructions = try self.accept_instructions(fun.body),
     };
 }
 
-pub fn accept_instructions(self: *AssemblyGenerator, insts: []IR.Instruction) Error!InstructionsArray {
+pub fn accept_instructions(self: *X86_64ASMGenerator, insts: []IR.Instruction) Error!InstructionsArray {
     var array = InstructionsArray.init(self.allocator);
     const prev = self.instructions;
     self.instructions = &array;
@@ -163,14 +179,14 @@ pub fn accept_instructions(self: *AssemblyGenerator, insts: []IR.Instruction) Er
     return array;
 }
 
-pub fn accept_return(self: *AssemblyGenerator, ret: IR.Return) Error!void {
+pub fn accept_return(self: *X86_64ASMGenerator, ret: IR.Return) Error!void {
     try self.instructions.?.appendSlice(&.{
         .{ .mov = .{ .src = try ret.value.accept(self, Operand), .dst = .{ .register = .{ .word = "eax" } } } },
         .ret,
     });
 }
 
-pub fn accept_unary(self: *AssemblyGenerator, unary: IR.Unary) Error!void {
+pub fn accept_unary(self: *X86_64ASMGenerator, unary: IR.Unary) Error!void {
     const operator: UnaryOperator = switch (unary.operator) {
         .complement => .not,
         .negate => .neg,
@@ -191,12 +207,12 @@ pub fn accept_unary(self: *AssemblyGenerator, unary: IR.Unary) Error!void {
     });
 }
 
-pub fn accept_variable(self: *AssemblyGenerator, variable: IR.Variable) Error!Operand {
+pub fn accept_variable(self: *X86_64ASMGenerator, variable: IR.Variable) Error!Operand {
     _ = self;
     return .{ .pseudo = .{ .id = variable.name } };
 }
 
-pub fn accept_constant(self: *AssemblyGenerator, constant: IR.Constant) Error!Operand {
+pub fn accept_constant(self: *X86_64ASMGenerator, constant: IR.Constant) Error!Operand {
     _ = self;
     return .{ .immediate = .{ .value = constant.tok.value.constant } };
 }
@@ -204,10 +220,10 @@ pub fn accept_constant(self: *AssemblyGenerator, constant: IR.Constant) Error!Op
 pub const PrettyPrinter = struct {
     writer: std.io.AnyWriter,
 
-    pub fn print(self: PrettyPrinter, program: AssemblyProgram) !void {
-        try self.writer.print("GeneratedProgram(", .{});
+    pub fn print(self: PrettyPrinter, program: ProgramASM) !void {
+        try self.writer.print("ProgramASM(", .{});
         try self.accept_function_def(program.function_definition);
-        try self.writer.print(")\n", .{});
+        try self.writer.print(")", .{});
     }
 
     pub fn accept_function_def(self: PrettyPrinter, fun: Function) !void {
@@ -271,30 +287,15 @@ pub const PseudoRegistersEliminator = struct {
     variables_offset: std.StringHashMap(u32),
     stack_offset: u32 = 0,
 
-    pub fn init(allocator: std.mem.Allocator) !*PseudoRegistersEliminator {
-        const self = try allocator.create(PseudoRegistersEliminator);
-        self.* = .{
-            .allocator = allocator,
-            .variables_offset = .init(allocator),
+    pub fn transform(program: *ProgramASM) !*ProgramASM {
+        var self: PseudoRegistersEliminator = .{
+            .allocator = program.arena.allocator(),
+            .variables_offset = .init(program.arena.allocator()),
         };
-        return self;
-    }
+        defer self.variables_offset.deinit();
 
-    pub fn deinit(self: *PseudoRegistersEliminator) void {
-        self.variables_offset.deinit();
-        self.allocator.destroy(self);
-    }
-
-    pub fn transform(self: *PseudoRegistersEliminator, program: AssemblyProgram) !AssemblyProgram {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        const prev = self.allocator;
-        self.allocator = arena.allocator();
-        defer self.allocator = prev;
-
-        return .{
-            .function_definition = try self.accept_function(program.function_definition),
-            .arena = arena,
-        };
+        program.function_definition = try self.accept_function(program.function_definition);
+        return program;
     }
 
     fn accept_function(self: *PseudoRegistersEliminator, fun: Function) !Function {
@@ -376,26 +377,12 @@ pub const FixUpInstructionsPass = struct {
     allocator: std.mem.Allocator,
     instructions: ?*InstructionsArray = null,
 
-    pub fn init(allocator: std.mem.Allocator) !*FixUpInstructionsPass {
-        const self = try allocator.create(FixUpInstructionsPass);
-        self.* = .{ .allocator = allocator };
-        return self;
-    }
+    pub fn transform(program: *ProgramASM) !*ProgramASM {
+        var self = FixUpInstructionsPass{ .allocator = program.arena.allocator() };
 
-    pub fn deinit(self: *FixUpInstructionsPass) void {
-        self.allocator.destroy(self);
-    }
+        program.function_definition = try self.accept_function(program.function_definition);
 
-    pub fn transform(self: *FixUpInstructionsPass, program: AssemblyProgram) !AssemblyProgram {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        const prev = self.allocator;
-        self.allocator = arena.allocator();
-        defer self.allocator = prev;
-
-        return .{
-            .function_definition = try self.accept_function(program.function_definition),
-            .arena = arena,
-        };
+        return program;
     }
 
     fn accept_function(self: *FixUpInstructionsPass, fun: Function) !Function {
@@ -469,7 +456,7 @@ pub const FixUpInstructionsPass = struct {
 pub const Emitter = struct {
     writer: std.io.AnyWriter,
 
-    fn emit(self: Emitter, program: AssemblyProgram) !void {
+    fn emit(self: Emitter, program: ProgramASM) !void {
         try self.writer.writeAll(".section .text\n");
         try self.accept_function_def(program.function_definition);
         try self.writer.writeAll(".section .note.GNU-stack,\"\",@progbits\n");
