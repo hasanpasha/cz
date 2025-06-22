@@ -35,7 +35,6 @@ pub fn main() !void {
     var res = clap.parse(clap.Help, &params, parsers, .{
         .diagnostic = &diag,
         .allocator = allocator,
-        // .assignment_separators = "=:",
     }) catch |err| {
         diag.report(stderr, err) catch {};
         return err;
@@ -65,6 +64,7 @@ pub fn main() !void {
         stderr.print("error while expanding the macros: {}\n", .{err}) catch {};
         exit(69);
     };
+    defer std.fs.deleteFileAbsolute(processed_path) catch {};
 
     if (expand_cmd_result != .Exited and expand_cmd_result.Exited != 0) {
         stderr.print("error exapnding: {s}", .{input_path}) catch {};
@@ -107,7 +107,6 @@ pub fn main() !void {
 
     if (res.args.parse != 0) {
         const printer = PrettyPrinter{ .writer = stdout.any() };
-        // printer.accept(program_ast, void) catch {};
         printer.print(program_ast) catch {};
         exit(0);
     }
@@ -136,7 +135,10 @@ pub fn main() !void {
     std.log.info("out asm to: {s}", .{asm_output_path});
 
     const asm_file = try std.fs.createFileAbsolute(asm_output_path, .{});
-    defer asm_file.close();
+    defer {
+        asm_file.close();
+        std.fs.deleteFileAbsolute(asm_output_path) catch {};
+    }
 
     var x86_64 = X86_64Emitter{ .writer = asm_file.writer().any() };
     const emitter = x86_64.emitter();
@@ -158,14 +160,6 @@ pub fn main() !void {
         stderr.print("gcc error compiling {s}: {}\n", .{ asm_output_path, term.Exited }) catch {};
         exit(5);
     }
-
-    std.fs.deleteFileAbsolute(asm_output_path) catch {
-        exit(5);
-    };
-
-    std.fs.deleteFileAbsolute(processed_path) catch {
-        exit(5);
-    };
 }
 
 fn replace_extension(alloc: std.mem.Allocator, input: []const u8, needle: []const u8, replacement: []const u8) ![]u8 {
