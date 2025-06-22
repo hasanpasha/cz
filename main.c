@@ -1,4 +1,4 @@
 int main(void)
 {
-    return 69;
+    return ~(-2);
 }
